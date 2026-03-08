@@ -1,0 +1,28 @@
+[Unit]
+Description=Discord Gemini Bot (discord_gemini_bot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kawata
+Group=kawata
+WorkingDirectory=/home/kawata/discord_gemini_bot
+
+# 環境変数ファイルを指定
+EnvironmentFile=/home/kawata/discord_gemini_bot/.env
+
+# venv等の仮想環境を使う場合は、Pythonのパスを適宜変更してください
+# 例: ExecStart=/home/kawata/discord_gemini_bot/venv/bin/python bot.py
+ExecStart=/usr/bin/python3 bot.py
+
+# プロセスが終了・クラッシュした場合は自動的に再起動する
+Restart=always
+# 再起動までの待機時間（秒）
+RestartSec=10
+
+# ログ出力時のバッファリングを無効化（エラーを確認しやすくするため）
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

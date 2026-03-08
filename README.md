@@ -20,7 +20,7 @@ sudo apt install python3 python3-pip python3-venv
 
 仮想環境（venv）を作成し、ライブラリをインストールすることをおすすめします。
 ```bash
-cd /home/kawata/discord_gemini_bot
+cd ~/discord_gemini_bot
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -43,7 +43,7 @@ Bot を常に動かし続けるため、systemd に登録します。
 
 **※注意:** `discord-gemini-bot.service` ファイル内で仮想環境の Python を利用する場合は、`ExecStart` の行を以下のように書き換えてください。
 ```ini
-ExecStart=/home/kawata/discord_gemini_bot/venv/bin/python bot.py
+ExecStart=/home/your_username/discord_gemini_bot/venv/bin/python bot.py
 ```
 
 サービスファイルをシステムディレクトリにコピーします。

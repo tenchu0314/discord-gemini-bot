@@ -5,15 +5,15 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=kawata
-Group=kawata
-WorkingDirectory=/home/kawata/discord_gemini_bot
+User=your_username
+Group=your_username
+WorkingDirectory=/home/your_username/discord_gemini_bot
 
 # 環境変数ファイルを指定
-EnvironmentFile=/home/kawata/discord_gemini_bot/.env
+EnvironmentFile=/home/your_username/discord_gemini_bot/.env
 
 # venv等の仮想環境を使う場合は、Pythonのパスを適宜変更してください
-# 例: ExecStart=/home/kawata/discord_gemini_bot/venv/bin/python bot.py
+# 例: ExecStart=/home/your_username/discord_gemini_bot/venv/bin/python bot.py
 ExecStart=/usr/bin/python3 bot.py
 
 # プロセスが終了・クラッシュした場合は自動的に再起動する

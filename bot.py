@@ -3,6 +3,7 @@ import re
 import asyncio
 import discord
 from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
 # .envファイルがあれば読み込む（ローカルテスト用）
@@ -72,6 +73,9 @@ async def on_message(message):
                     return gemini_client.models.generate_content(
                         model='gemini-3.1-flash-lite-preview',
                         contents=prompt,
+                        config=types.GenerateContentConfig(
+                            tools=[{"google_search": {}}],
+                        )
                     )
                 
                 response = await asyncio.to_thread(generate)

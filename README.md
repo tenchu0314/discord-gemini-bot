@@ -1,6 +1,6 @@
 # Discord Gemini Bot
 
-Discord のメンション `@Bot` に反応して、Gemini の `gemini-3.1-flash-lite-preview` モデルで回答する Discord Bot です。
+Discord のメンション `@Bot` に反応して、Gemini の `gemini-3.1-pro-preview` モデルで回答する Discord Bot です。
 Ubuntu 上で 24 時間稼働できるように `systemctl` でのサービス化に対応しています。
 
 ## 🔧 セットアップ方法 (Ubuntu)

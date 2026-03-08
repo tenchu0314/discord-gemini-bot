@@ -26,6 +26,7 @@ intents = discord.Intents.default()
 intents.message_content = True  # メッセージの内容を読み取るために必要
 client = discord.Client(intents=intents)
 
+
 def split_message(text, limit=2000):
     """Discordの2000文字制限に合わせてメッセージを分割する"""
     msgs = []
@@ -35,19 +36,22 @@ def split_message(text, limit=2000):
         text = text[limit:]
     return msgs
 
+
 def remove_thinking(text):
     """推論ブロック（<think>...</think> など）を除去する"""
     if not text:
         return ""
     # <think>...</think> や <thought>...</thought> のようなタグを中身ごと削除
-    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
-    text = re.sub(r'<thought>.*?</thought>', '', text, flags=re.DOTALL)
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    text = re.sub(r"<thought>.*?</thought>", "", text, flags=re.DOTALL)
     return text.strip()
+
 
 @client.event
 async def on_ready():
-    print(f'Logged in as {client.user} ({client.user.id})')
-    print('Bot is ready and waiting for mentions!')
+    print(f"Logged in as {client.user} ({client.user.id})")
+    print("Bot is ready and waiting for mentions!")
+
 
 @client.event
 async def on_message(message):
@@ -59,10 +63,12 @@ async def on_message(message):
     if client.user in message.mentions:
         # メッセージからメンション部分を削除してプロンプトを作成
         # 例: "@DiscordBot こんにちは" -> "こんにちは"
-        prompt = message.content.replace(f'<@{client.user.id}>', '').strip()
-        
+        prompt = message.content.replace(f"<@{client.user.id}>", "").strip()
+
         if not prompt:
-            await message.channel.send("何か質問を入力してください。（例: `@Botの名前 富士山の高さは？`）")
+            await message.channel.send(
+                "何か質問を入力してください。（例: `@Botの名前 富士山の高さは？`）"
+            )
             return
 
         # Discordの「入力中...」ステータスを表示
@@ -71,18 +77,18 @@ async def on_message(message):
                 # Gemini API にリクエストを送信 (ブロッキング処理を回避するため別スレッドで実行)
                 def generate():
                     return gemini_client.models.generate_content(
-                        model='gemini-3.1-flash-lite-preview',
+                        model="gemini-3.1-pro-preview",
                         contents=prompt,
                         config=types.GenerateContentConfig(
                             tools=[{"google_search": {}}],
-                        )
+                        ),
                     )
-                
+
                 response = await asyncio.to_thread(generate)
-                
+
                 # レスポンスから推論部分を削除
                 reply_text = remove_thinking(response.text)
-                
+
                 if not reply_text:
                     reply_text = "（回答が空になりました）"
 
@@ -94,10 +100,13 @@ async def on_message(message):
                     else:
                         # 続きのメッセージは通常の投稿として送信
                         await message.channel.send(chunk)
-                    
+
             except Exception as e:
                 print(f"Error during Gemini API call: {e}")
-                await message.reply("申し訳ありません、エラーが発生しました。ログを確認してください。")
+                await message.reply(
+                    "申し訳ありません、エラーが発生しました。ログを確認してください。"
+                )
+
 
 # ボットの起動
 if __name__ == "__main__":

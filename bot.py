@@ -18,6 +18,7 @@ load_dotenv()
 # 環境変数の取得
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
 
 if not DISCORD_BOT_TOKEN or not GOOGLE_API_KEY:
     print("Error: DISCORD_BOT_TOKEN or GOOGLE_API_KEY is not set.")
@@ -38,7 +39,7 @@ gemini_client = genai.Client(api_key=GOOGLE_API_KEY)
 def generate_content(prompt):
     """Gemini API にリクエストを送信 (リトライ機能付き)"""
     return gemini_client.models.generate_content(
-        model="gemini-3.1-pro-preview",
+        model=GEMINI_MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(
             tools=[{"google_search": {}}],

@@ -29,6 +29,18 @@ if not DISCORD_BOT_TOKEN or not GOOGLE_API_KEY:
 gemini_client = genai.Client(api_key=GOOGLE_API_KEY)
 
 
+def get_system_instruction():
+    """SOUL.md からシステム指示（性格付け）を読み込む"""
+    soul_file = "SOUL.md"
+    if os.path.exists(soul_file):
+        try:
+            with open(soul_file, "r", encoding="utf-8") as f:
+                return f.read().strip()
+        except Exception as e:
+            print(f"Error reading {soul_file}: {e}")
+    return None
+
+
 @retry(
     stop=stop_after_attempt(6),
     wait=wait_exponential(multiplier=1, min=2, max=10),
@@ -38,11 +50,13 @@ gemini_client = genai.Client(api_key=GOOGLE_API_KEY)
 )
 def generate_content(prompt):
     """Gemini API にリクエストを送信 (リトライ機能付き)"""
+    system_instruction = get_system_instruction()
     return gemini_client.models.generate_content(
         model=GEMINI_MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(
             tools=[{"google_search": {}}],
+            system_instruction=system_instruction,
         ),
     )
 

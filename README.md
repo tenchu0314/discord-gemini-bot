@@ -1,6 +1,6 @@
 # Discord Gemini Bot
 
-Discord のメンション `@Bot` に反応して、Gemini のモデル（デフォルト: `gemini-3.5-flash`）で回答する Discord Bot です。
+Discord のメンション `@Bot` に反応して、Gemini のモデル（デフォルト: `gemini-3.6-flash`）で回答する Discord Bot です。
 Ubuntu 上で 24 時間稼働できるように `systemctl` でのサービス化に対応しています。
 
 ## 🔧 セットアップ方法 (Ubuntu)
@@ -36,7 +36,7 @@ nano .env  # もしくは vim 等で編集
 
 - `DISCORD_BOT_TOKEN`: Discord Developer Portal で作成した Bot の Token
 - `GOOGLE_API_KEY`: Google AI Studio で取得した API キー
-- `GEMINI_MODEL`: 使用するモデル名（例: `gemini-2.0-flash`）。未指定の場合は `gemini-3.5-flash` が使用されます。
+- `GEMINI_MODEL`: 使用するモデル名（例: `gemini-2.0-flash`）。未指定の場合は `gemini-3.6-flash` が使用されます。
 
 ### 4. Systemdサービスへの登録・自動起動設定
 

@@ -1,28 +1,34 @@
 [Unit]
-Description=Discord Gemini Bot (discord_gemini_bot)
+Description=Discord Gemini Bot (discord-gemini-bot)
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
 User=your_username
 Group=your_username
-WorkingDirectory=/home/your_username/discord_gemini_bot
+WorkingDirectory=/home/your_username/discord-gemini-bot
 
 # 環境変数ファイルを指定
-EnvironmentFile=/home/your_username/discord_gemini_bot/.env
+EnvironmentFile=/home/your_username/discord-gemini-bot/.env
 
-# venv等の仮想環境を使う場合は、Pythonのパスを適宜変更してください
-# 例: ExecStart=/home/your_username/discord_gemini_bot/venv/bin/python bot.py
-ExecStart=/usr/bin/python3 bot.py
+# 仮想環境（venv）のPythonを使用してボットを起動
+ExecStart=/home/your_username/discord-gemini-bot/venv/bin/python /home/your_username/discord-gemini-bot/bot.py
 
-# プロセスが終了・クラッシュした場合は自動的に再起動する
-Restart=always
+# プロセスが異常終了した場合は自動的に再起動する（トークン無効化ループ防止のためStartLimitと併用）
+Restart=on-failure
 # 再起動までの待機時間（秒）
 RestartSec=10
+
+# セキュリティ強化設定
+NoNewPrivileges=true
+PrivateTmp=true
 
 # ログ出力時のバッファリングを無効化（エラーを確認しやすくするため）
 Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=multi-user.target
+

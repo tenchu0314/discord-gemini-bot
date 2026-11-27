@@ -3,12 +3,14 @@ import re
 import sys
 import asyncio
 from pathlib import Path
+from urllib.parse import quote
 import discord
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 from dotenv import load_dotenv
 from tenacity import (
     retry,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
@@ -16,7 +18,11 @@ from tenacity import (
 BASE_DIR = Path(__file__).resolve().parent
 ENV_FILE = BASE_DIR / ".env"
 SOUL_FILE = BASE_DIR / "SOUL.md"
+DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
 MAX_RETRY_ATTEMPTS = 6
+GEMINI_TIMEOUT_MS = 60_000
+MAX_CONCURRENT_REQUESTS = 5
+RETRYABLE_CLIENT_STATUS_CODES = frozenset({408, 429})
 
 # .envファイルがあれば読み込む（ローカルテスト用）
 load_dotenv(dotenv_path=ENV_FILE)
@@ -24,10 +30,13 @@ load_dotenv(dotenv_path=ENV_FILE)
 # 環境変数の取得
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+GEMINI_MODEL = (os.getenv("GEMINI_MODEL") or "").strip() or DEFAULT_GEMINI_MODEL
 
 # Gemini クライアント（起動時または初回呼び出し時に初期化）
 gemini_client = None
+
+# 同時リクエスト数制限（スレッドプール枯渇・APIクォータ急増の緩和）
+request_semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
 
 def redact_secrets(message):
@@ -41,7 +50,30 @@ def redact_secrets(message):
     ):
         if secret:
             text = text.replace(secret, "[REDACTED]")
+            encoded = quote(secret, safe="")
+            if encoded and encoded != secret:
+                text = text.replace(encoded, "[REDACTED]")
+    # URLクエリ文字列内のキーやトークンも念のためマスク
+    text = re.sub(
+        r"([?&](?:key|api_key|token)=)([^&\s'\"`]+)",
+        r"\1[REDACTED]",
+        text,
+        flags=re.IGNORECASE,
+    )
+    # Google API Key 形式（AIza...）が直接含まれた場合もマスク
+    text = re.sub(r"\bAIza[0-9A-Za-z_-]{30,}\b", "[REDACTED]", text)
     return text
+
+
+def is_retryable_error(exc):
+    """一時的なエラーのみリトライ対象と判定する"""
+    if isinstance(exc, errors.ClientError):
+        return getattr(exc, "code", None) in RETRYABLE_CLIENT_STATUS_CODES
+    if isinstance(exc, (ValueError, TypeError, KeyError, AttributeError)):
+        return False
+    if isinstance(exc, RuntimeError) and "GOOGLE_API_KEY" in str(exc):
+        return False
+    return True
 
 
 def get_gemini_client():
@@ -52,7 +84,10 @@ def get_gemini_client():
     api_key = GOOGLE_API_KEY or os.getenv("GOOGLE_API_KEY")
     if not api_key:
         raise RuntimeError("GOOGLE_API_KEY is not set.")
-    gemini_client = genai.Client(api_key=api_key)
+    gemini_client = genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS),
+    )
     return gemini_client
 
 
@@ -72,20 +107,22 @@ def get_system_instruction():
 @retry(
     stop=stop_after_attempt(MAX_RETRY_ATTEMPTS),
     wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception(is_retryable_error),
     reraise=True,
     before_sleep=lambda retry_state: print(
         f"Retrying Gemini API call (attempt {retry_state.attempt_number}/{MAX_RETRY_ATTEMPTS - 1})..."
     ),
 )
 def generate_content(prompt):
-    """Gemini API にリクエストを送信 (リトライ機能付き)"""
+    """Gemini API にリクエストを送信 (一時的エラー時のリトライ機能付き)"""
     system_instruction = get_system_instruction()
     active_client = get_gemini_client()
+    model_name = (GEMINI_MODEL or "").strip() or DEFAULT_GEMINI_MODEL
     return active_client.models.generate_content(
-        model=GEMINI_MODEL,
+        model=model_name,
         contents=prompt,
         config=types.GenerateContentConfig(
-            tools=[{"google_search": {}}],
+            tools=[types.Tool(google_search=types.GoogleSearch())],
             system_instruction=system_instruction,
         ),
     )
@@ -136,6 +173,9 @@ async def on_ready():
 
 @client.event
 async def on_message(message):
+    if client.user is None:
+        return
+
     # ボット自身および他のボットからのメッセージは無視（無限ループ防止）
     if message.author == client.user or getattr(message.author, "bot", False):
         return
@@ -147,37 +187,46 @@ async def on_message(message):
         prompt = re.sub(rf"<@!?{client.user.id}>", "", message.content).strip()
 
         if not prompt:
-            await message.channel.send(
-                "何か質問を入力してください。（例: `@Botの名前 富士山の高さは？`）"
-            )
+            try:
+                await message.channel.send(
+                    "何か質問を入力してください。（例: `@Botの名前 富士山の高さは？`）"
+                )
+            except discord.HTTPException as e:
+                print(f"Error sending empty-prompt guidance: {redact_secrets(e)}")
             return
 
-        # Discordの「入力中...」ステータスを表示
-        async with message.channel.typing():
-            try:
-                # Gemini API にリクエストを送信 (ブロッキング処理を回避するため別スレッドで実行)
-                response = await asyncio.to_thread(generate_content, prompt)
+        # 同時実行数を制限しつつ、Discordの「入力中...」ステータスを表示
+        async with request_semaphore:
+            async with message.channel.typing():
+                try:
+                    # Gemini API にリクエストを送信 (ブロッキング処理を回避するため別スレッドで実行)
+                    response = await asyncio.to_thread(generate_content, prompt)
 
-                # レスポンスから推論部分を削除
-                reply_text = remove_thinking(response.text)
+                    # レスポンスから推論部分を削除
+                    reply_text = remove_thinking(getattr(response, "text", None))
 
-                if not reply_text:
-                    reply_text = "（回答が空になりました）"
+                    if not reply_text:
+                        reply_text = "（回答が空になりました）"
 
-                # 2000文字制限で分割して送信
-                for index, chunk in enumerate(split_message(reply_text)):
-                    if index == 0:
-                        # 最初のメッセージは返信として送信
-                        await message.reply(chunk)
-                    else:
-                        # 続きのメッセージは通常の投稿として送信
-                        await message.channel.send(chunk)
+                    # 2000文字制限で分割して送信
+                    for index, chunk in enumerate(split_message(reply_text)):
+                        if index == 0:
+                            # 最初のメッセージは返信として送信
+                            await message.reply(chunk)
+                        else:
+                            # 続きのメッセージは通常の投稿として送信
+                            await message.channel.send(chunk)
 
-            except Exception as e:
-                print(f"Error during Gemini API call: {redact_secrets(e)}")
-                await message.reply(
-                    "申し訳ありません、エラーが発生しました。ログを確認してください。"
-                )
+                except Exception as e:
+                    print(f"Error during Gemini API call: {redact_secrets(e)}")
+                    try:
+                        await message.reply(
+                            "申し訳ありません、エラーが発生しました。ログを確認してください。"
+                        )
+                    except discord.HTTPException as reply_err:
+                        print(
+                            f"Error sending failure reply: {redact_secrets(reply_err)}"
+                        )
 
 
 def main():
@@ -190,14 +239,10 @@ def main():
         print("環境変数に DISCORD_BOT_TOKEN と GOOGLE_API_KEY を設定してください。")
         sys.exit(1)
 
-    global gemini_client
-    if gemini_client is None:
-        gemini_client = genai.Client(api_key=api_key)
-
+    get_gemini_client()
     client.run(token)
 
 
 # ボットの起動
 if __name__ == "__main__":
     main()
-

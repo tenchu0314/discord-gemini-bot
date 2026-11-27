@@ -25,10 +25,18 @@ RestartSec=10
 # セキュリティ強化設定
 NoNewPrivileges=true
 PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+UMask=0077
 
-# ログ出力時のバッファリングを無効化（エラーを確認しやすくするため）
+# ログ出力時のバッファリングおよびバイトコード生成を無効化
 Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
 
 [Install]
 WantedBy=multi-user.target
-

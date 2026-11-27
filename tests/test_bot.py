@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
+from google.genai import errors, types
 import bot
 
 
@@ -90,6 +91,17 @@ class TestRedactSecrets(unittest.TestCase):
             self.assertNotIn("secret-discord-token-456", redacted)
             self.assertIn("[REDACTED]", redacted)
 
+    def test_redact_secrets_masks_url_encoded_and_query_patterns(self):
+        with patch.object(bot, "GOOGLE_API_KEY", "key+with/slash=123"):
+            msg = (
+                "GET https://example.com/v1?key=key%2Bwith%2Fslash%3D123 "
+                "and fallback AIzaSyDummyKeyValueForTesting1234567890"
+            )
+            redacted = bot.redact_secrets(msg)
+            self.assertNotIn("key%2Bwith%2Fslash%3D123", redacted)
+            self.assertNotIn("AIzaSyDummyKeyValueForTesting1234567890", redacted)
+            self.assertIn("[REDACTED]", redacted)
+
 
 class TestGenerateContent(unittest.TestCase):
     def test_generate_content_passes_google_search_and_system_instruction(self):
@@ -125,6 +137,68 @@ class TestGenerateContent(unittest.TestCase):
 
         self.assertIn("Temporary API failure", str(ctx.exception))
         self.assertEqual(mock_client.models.generate_content.call_count, bot.MAX_RETRY_ATTEMPTS)
+
+    def test_generate_content_does_not_retry_permanent_client_errors(self):
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = errors.ClientError(
+            403, {"error": {"message": "Forbidden"}}
+        )
+
+        with patch.object(bot, "get_gemini_client", return_value=mock_client), patch.object(
+            bot, "get_system_instruction", return_value="日本語回答する"
+        ), patch.object(bot.generate_content.retry, "sleep", return_value=None):
+            with self.assertRaises(errors.ClientError):
+                bot.generate_content("権限エラーテスト")
+
+        self.assertEqual(mock_client.models.generate_content.call_count, 1)
+
+    def test_generate_content_retries_rate_limit_and_server_errors(self):
+        for exc in (
+            errors.ClientError(429, {"error": {"message": "Too Many Requests"}}),
+            errors.ServerError(503, {"error": {"message": "Service Unavailable"}}),
+        ):
+            with self.subTest(code=exc.code):
+                mock_client = MagicMock()
+                mock_client.models.generate_content.side_effect = exc
+
+                with patch.object(bot, "get_gemini_client", return_value=mock_client), patch.object(
+                    bot, "get_system_instruction", return_value="日本語回答する"
+                ), patch.object(bot.generate_content.retry, "sleep", return_value=None):
+                    with self.assertRaises(errors.APIError):
+                        bot.generate_content("一時エラーテスト")
+
+                self.assertEqual(
+                    mock_client.models.generate_content.call_count,
+                    bot.MAX_RETRY_ATTEMPTS,
+                )
+
+    def test_generate_content_falls_back_to_default_model_when_empty(self):
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = SimpleNamespace(text="ok")
+
+        with patch.object(bot, "GEMINI_MODEL", "   "), patch.object(
+            bot, "get_gemini_client", return_value=mock_client
+        ), patch.object(bot, "get_system_instruction", return_value=None):
+            bot.generate_content("テスト")
+
+        _, kwargs = mock_client.models.generate_content.call_args
+        self.assertEqual(kwargs["model"], bot.DEFAULT_GEMINI_MODEL)
+
+    def test_get_gemini_client_sets_timeout_http_options(self):
+        with patch.object(bot, "gemini_client", None), patch.object(
+            bot, "GOOGLE_API_KEY", "test-api-key"
+        ), patch.object(bot.genai, "Client") as mock_client_cls:
+            bot.get_gemini_client()
+
+        mock_client_cls.assert_called_once()
+        _, kwargs = mock_client_cls.call_args
+        self.assertEqual(kwargs["api_key"], "test-api-key")
+        self.assertIsInstance(kwargs["http_options"], types.HttpOptions)
+        self.assertEqual(kwargs["http_options"].timeout, bot.GEMINI_TIMEOUT_MS)
+
+    def test_missing_api_key_error_is_not_retried(self):
+        self.assertFalse(bot.is_retryable_error(RuntimeError("GOOGLE_API_KEY is not set.")))
+        self.assertFalse(bot.is_retryable_error(ValueError("invalid argument")))
 
 
 class TestDiscordClientAndOnMessage(unittest.IsolatedAsyncioTestCase):
@@ -231,6 +305,26 @@ class TestDiscordClientAndOnMessage(unittest.IsolatedAsyncioTestCase):
             msg.reply.assert_awaited_once_with(
                 "申し訳ありません、エラーが発生しました。ログを確認してください。"
             )
+
+    async def test_on_message_ignores_when_client_user_is_none(self):
+        with patch.object(bot.client, "_connection") as mock_conn:
+            mock_conn.user = None
+            msg = self._make_message("<@999999999> テスト")
+            await bot.on_message(msg)
+            msg.reply.assert_not_called()
+            msg.channel.send.assert_not_called()
+
+    async def test_on_message_handles_discord_http_exception_on_error_reply(self):
+        fake_http_response = SimpleNamespace(status=403, reason="Forbidden")
+        http_error = discord.HTTPException(fake_http_response, "Missing Permissions")
+        with patch.object(bot.client, "_connection") as mock_conn, patch.object(
+            bot, "generate_content", side_effect=RuntimeError("API Error")
+        ):
+            mock_conn.user = self.bot_user
+            msg = self._make_message(f"<@{self.bot_user.id}> 権限エラーテスト")
+            msg.reply = AsyncMock(side_effect=http_error)
+            await bot.on_message(msg)
+            msg.reply.assert_awaited_once()
 
 
 class TestMainEntryPoint(unittest.TestCase):
